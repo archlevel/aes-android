@@ -4,7 +4,8 @@ public class AesUtil {
     static {
         System.loadLibrary("AesUtil");
     }
-    static public native String stringFromJNI();
+
+    static public native String encrypt$decrypt(String plainData);
 
     /**
      * 加密
@@ -19,4 +20,10 @@ public class AesUtil {
      * @return
      */
     static public native String decrypt(String encData);
+
+    static public native String encBase64(String data);
+
+    static public native String decBase64(String data);
+
+    static public native String trans(String data);
 }

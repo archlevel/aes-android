@@ -1,5 +1,9 @@
 #include <jni.h>
-#include <string>
+
+#include <stdint.h>
+#include <iostream>
+#include <stdlib.h>
+using namespace std;
 
 #include <vector>
 
@@ -610,14 +614,14 @@ inline unsigned char rj_xtime(unsigned char x)
 
 
 unsigned char sec_key[KEY_LEN] =   { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-                                      0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
+                                     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f };
 
 // Test vectors
 #define VECTOR_NUM   4
 #define VECTOR_SIZE 16
 
 unsigned char secv_key[KEY_LEN] = { 0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81,
-                                     0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4 };
+                                    0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4 };
 
 unsigned char sectv_dec[VECTOR_SIZE][VECTOR_SIZE] = {
         { 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a },
@@ -698,191 +702,357 @@ unsigned char* decrypts(unsigned char* data, int len) {
     return result;
 }
 
+/**
+ * BABE64
+ */
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#if __cplusplus >= 201703L
+#include <string_view>
+#endif  // __cplusplus >= 201703L
 
-static const std::string base64_chars =
+std::string base64_encode     (std::string const& s, bool url = false);
+std::string base64_encode_pem (std::string const& s);
+std::string base64_encode_mime(std::string const& s);
+
+std::string base64_decode(std::string const& s, bool remove_linebreaks = false);
+std::string base64_encode(unsigned char const*, size_t len, bool url = false);
+
+#if __cplusplus >= 201703L
+//
+// Interface with std::string_view rather than const std::string&
+// Requires C++17
+// Provided by Yannic Bonenberger (https://github.com/Yannic)
+//
+std::string base64_encode     (std::string_view s, bool url = false);
+std::string base64_encode_pem (std::string_view s);
+std::string base64_encode_mime(std::string_view s);
+
+std::string base64_decode(std::string_view s, bool remove_linebreaks = false);
+#endif  // __cplusplus >= 201703L
+//
+// Depending on the url parameter in base64_chars, one of
+// two sets of base64 characters needs to be chosen.
+// They differ in their last two characters.
+//
+const char* base64_chars[2] = {
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
-        "0123456789+/";
+        "0123456789"
+        "+/",
 
-static inline bool is_base64(unsigned char c) {
-    return (isalnum(c) || (c == '+') || (c == '/'));
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789"
+        "-_"};
+
+static unsigned int pos_of_char(const unsigned char chr) {
+    //
+    // Return the position of chr within base64_encode()
+    //
+
+    if      (chr >= 'A' && chr <= 'Z') return chr - 'A';
+    else if (chr >= 'a' && chr <= 'z') return chr - 'a' + ('Z' - 'A')               + 1;
+    else if (chr >= '0' && chr <= '9') return chr - '0' + ('Z' - 'A') + ('z' - 'a') + 2;
+    else if (chr == '+' || chr == '-') return 62; // Be liberal with input and accept both url ('-') and non-url ('+') base 64 characters (
+    else if (chr == '/' || chr == '_') return 63; // Ditto for '/' and '_'
+
+    throw "If input is correct, this line should never be reached.";
 }
 
-std::string base64_encode(unsigned char const* bytes_to_encode, unsigned int in_len) {
-    std::string ret;
-    int i = 0;
-    int j = 0;
-    unsigned char char_array_3[3];
-    unsigned char char_array_4[4];
-
-    while (in_len--) {
-        char_array_3[i++] = *(bytes_to_encode++);
-        if (i == 3) {
-            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-            char_array_4[3] = char_array_3[2] & 0x3f;
-
-            for(i = 0; (i <4) ; i++)
-                ret += base64_chars[char_array_4[i]];
-            i = 0;
-        }
+static std::string insert_linebreaks(std::string str, size_t distance) {
+    //
+    // Provided by https://github.com/JomaCorpFX, adapted by me.
+    //
+    if (!str.length()) {
+        return "";
     }
 
-    if (i)
-    {
-        for(j = i; j < 3; j++)
-            char_array_3[j] = '\0';
+    size_t pos = distance;
 
-        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-        char_array_4[3] = char_array_3[2] & 0x3f;
+    while (pos < str.size()) {
+        str.insert(pos, "\n");
+        pos += distance + 1;
+    }
 
-        for (j = 0; (j < i + 1); j++)
-            ret += base64_chars[char_array_4[j]];
+    return str;
+}
 
-        while((i++ < 3))
-            ret += '=';
+template <typename String, unsigned int line_length>
+static std::string encode_with_line_breaks(String s) {
+    return insert_linebreaks(base64_encode(s, false), line_length);
+}
 
+template <typename String>
+static std::string encode_pem(String s) {
+    return encode_with_line_breaks<String, 64>(s);
+}
+
+template <typename String>
+static std::string encode_mime(String s) {
+    return encode_with_line_breaks<String, 76>(s);
+}
+
+template <typename String>
+static std::string encode(String s, bool url) {
+    return base64_encode(reinterpret_cast<const unsigned char*>(s.data()), s.length(), url);
+}
+
+std::string base64_encode(unsigned char const* bytes_to_encode, size_t in_len, bool url) {
+
+    size_t len_encoded = (in_len +2) / 3 * 4;
+
+    unsigned char trailing_char = url ? '.' : '=';
+
+    //
+    // Choose set of base64 characters. They differ
+    // for the last two positions, depending on the url
+    // parameter.
+    // A bool (as is the parameter url) is guaranteed
+    // to evaluate to either 0 or 1 in C++ therfore,
+    // the correct character set is chosen by subscripting
+    // base64_chars with url.
+    //
+    const char* base64_chars_ = base64_chars[url];
+
+    std::string ret;
+    ret.reserve(len_encoded);
+
+    unsigned int pos = 0;
+
+    while (pos < in_len) {
+        ret.push_back(base64_chars_[(bytes_to_encode[pos + 0] & 0xfc) >> 2]);
+
+        if (pos+1 < in_len) {
+            ret.push_back(base64_chars_[((bytes_to_encode[pos + 0] & 0x03) << 4) + ((bytes_to_encode[pos + 1] & 0xf0) >> 4)]);
+
+            if (pos+2 < in_len) {
+                ret.push_back(base64_chars_[((bytes_to_encode[pos + 1] & 0x0f) << 2) + ((bytes_to_encode[pos + 2] & 0xc0) >> 6)]);
+                ret.push_back(base64_chars_[  bytes_to_encode[pos + 2] & 0x3f]);
+            }
+            else {
+                ret.push_back(base64_chars_[(bytes_to_encode[pos + 1] & 0x0f) << 2]);
+                ret.push_back(trailing_char);
+            }
+        }
+        else {
+
+            ret.push_back(base64_chars_[(bytes_to_encode[pos + 0] & 0x03) << 4]);
+            ret.push_back(trailing_char);
+            ret.push_back(trailing_char);
+        }
+
+        pos += 3;
+    }
+
+
+    return ret;
+}
+
+template <typename String>
+static std::string decode(String encoded_string, bool remove_linebreaks) {
+    //
+    // decode(…) is templated so that it can be used with String = const std::string&
+    // or std::string_view (requires at least C++17)
+    //
+
+    if (remove_linebreaks) {
+
+        if (! encoded_string.length() ) {
+            return "";
+        }
+
+        std::string copy(encoded_string);
+
+        size_t pos=0;
+        while ((pos = copy.find("\n", pos)) != std::string::npos) {
+            copy.erase(pos, 1);
+        }
+
+        return base64_decode(copy, false);
+
+    }
+
+    size_t length_of_string = encoded_string.length();
+    if (!length_of_string) return std::string("");
+
+    size_t in_len = length_of_string;
+    size_t pos = 0;
+
+    //
+    // The approximate length (bytes) of the decoded string might be one ore
+    // two bytes smaller, depending on the amount of trailing equal signs
+    // in the encoded string. This approximation is needed to reserve
+    // enough space in the string to be returned.
+    //
+    size_t approx_length_of_decoded_string = length_of_string / 4 * 3;
+    std::string ret;
+    ret.reserve(approx_length_of_decoded_string);
+
+    while (pos < in_len) {
+
+        unsigned int pos_of_char_1 = pos_of_char(encoded_string[pos+1] );
+
+        ret.push_back(static_cast<std::string::value_type>( ( (pos_of_char(encoded_string[pos+0]) ) << 2 ) + ( (pos_of_char_1 & 0x30 ) >> 4)));
+
+        if (encoded_string[pos+2] != '=' && encoded_string[pos+2] != '.') { // accept URL-safe base 64 strings, too, so check for '.' also.
+
+            unsigned int pos_of_char_2 = pos_of_char(encoded_string[pos+2] );
+            ret.push_back(static_cast<std::string::value_type>( (( pos_of_char_1 & 0x0f) << 4) + (( pos_of_char_2 & 0x3c) >> 2)));
+
+            if (encoded_string[pos+3] != '=' && encoded_string[pos+3] != '.') {
+                ret.push_back(static_cast<std::string::value_type>( ( (pos_of_char_2 & 0x03 ) << 6 ) + pos_of_char(encoded_string[pos+3])   ));
+            }
+        }
+
+        pos += 4;
     }
 
     return ret;
-
 }
 
-std::string base64_decode(std::string const& encoded_string) {
-    int in_len = encoded_string.size();
-    int i = 0;
-    int j = 0;
-    int in_ = 0;
-    unsigned char char_array_4[4], char_array_3[3];
-    std::string ret;
-
-    while (in_len-- && ( encoded_string[in_] != '=') && is_base64(encoded_string[in_])) {
-        char_array_4[i++] = encoded_string[in_]; in_++;
-        if (i ==4) {
-            for (i = 0; i <4; i++)
-                char_array_4[i] = base64_chars.find(char_array_4[i]);
-
-            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-            for (i = 0; (i < 3); i++)
-                ret += char_array_3[i];
-            i = 0;
-        }
-    }
-
-    if (i) {
-        for (j = i; j <4; j++)
-            char_array_4[j] = 0;
-
-        for (j = 0; j <4; j++)
-            char_array_4[j] = base64_chars.find(char_array_4[j]);
-
-        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-        for (j = 0; (j < i - 1); j++) ret += char_array_3[j];
-    }
-
-    return ret;
+std::string base64_decode(std::string const& s, bool remove_linebreaks) {
+    return decode(s, remove_linebreaks);
 }
 
-jbyteArray jstringTojbyeArray(JNIEnv* env, jstring jstr) {
-    char *rtn = NULL;
-    jclass clsstring = env->FindClass("java/lang/String");
-    jstring strencode = env->NewStringUTF("UTF-8");
-    jmethodID mid = env->GetMethodID(clsstring, "getBytes", "(Ljava/lang/String;)[B");
-    jbyteArray barr = (jbyteArray) env->CallObjectMethod(jstr, mid, strencode);
-    return barr;
+std::string base64_encode(std::string const& s, bool url) {
+    return encode(s, url);
 }
 
-jstring stringTojstring(JNIEnv* env,std::string str) {
-    const char* pat = str.c_str();
-    jclass strClass = (env)->FindClass("java/lang/String");
-    jmethodID ctorID = (env)->GetMethodID(strClass, "<init>", "([BLjava/lang/String;)V");
-    jbyteArray bytes = (env)->NewByteArray(strlen(pat));
-    (env)->SetByteArrayRegion(bytes, 0, strlen(pat), (jbyte *) pat);
-    jstring encoding = (env)->NewStringUTF("UTF-8");
-    return (jstring) (env)->NewObject(strClass, ctorID, bytes, encoding);
-
+std::string base64_encode_pem (std::string const& s) {
+    return encode_pem(s);
 }
 
-std::string jstringTostring(JNIEnv* env, jstring jstr) {
-    char *rtn = NULL;
-    jbyteArray barr = jstringTojbyeArray(env,jstr);
-    jsize alen = env->GetArrayLength(barr);
-    jbyte *ba = env->GetByteArrayElements(barr, JNI_FALSE);
-    if (alen > 0) {
-        rtn = (char *) malloc(alen + 1);
-        memcpy(rtn, ba, alen);
-        rtn[alen] = 0;
-    }
-    env->ReleaseByteArrayElements(barr, ba, 0);
-    std::string stemp(rtn);
-    free(rtn);
-    return stemp;
+std::string base64_encode_mime(std::string const& s) {
+    return encode_mime(s);
 }
 
-void test()
-{
+#if __cplusplus >= 201703L
+//
+// Interface with std::string_view rather than const std::string&
+// Requires C++17
+// Provided by Yannic Bonenberger (https://github.com/Yannic)
+//
 
-
+std::string base64_encode(std::string_view s, bool url) {
+   return encode(s, url);
 }
 
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_neucore_neulink_aes_MainActivity_stringFromJNI(
-        JNIEnv* env,
-        jobject /* this */) {
-    std::string hello = "Hello from C++";
-    return env->NewStringUTF(hello.c_str());
+std::string base64_encode_pem(std::string_view s) {
+   return encode_pem(s);
+}
+
+std::string base64_encode_mime(std::string_view s) {
+   return encode_mime(s);
+}
+
+std::string base64_decode(std::string_view s, bool remove_linebreaks) {
+  return decode(s, remove_linebreaks);
+}
+
+#endif  // __cplusplus >= 201703L
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+jstring stringTojstring(JNIEnv *env, string data){
+    return env->NewStringUTF(data.c_str());
+}
+
+string jstringTostring(JNIEnv *env,jstring jstr_input){
+    char *input = const_cast<char *>((*env).GetStringUTFChars(jstr_input, JNI_FALSE));
+    std::string inputstr = (char*)input;
+    return inputstr;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_neucore_neulink_aes_AesUtil_encrypt(JNIEnv *env, jclass clazz, jstring data) {
+    string orig = jstringTostring(env,data);
+    std::string encoded = base64_encode(orig, orig.length());
+
+    unsigned char* input = (unsigned  char*)encoded.c_str();
+//    printf("in c++ plain = %s\n", input);
+    unsigned char * result = encrypts(input,strlen((char*)input));
+    std::string resultStr = (char*)result;
+
+    std::string encoded0 = base64_encode(resultStr, resultStr.length());
+    unsigned char* encoded0c_str = (unsigned  char*)encoded0.c_str();
+    jstring encoded0dist = stringTojstring(env,(const char *)encoded0c_str);
+    return encoded0dist;
+}extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_neucore_neulink_aes_AesUtil_decrypt(JNIEnv *env, jclass clazz, jstring encoded0dist) {
+
+    string encoded0str = jstringTostring(env,encoded0dist);
+    std::string decoded0 = base64_decode(encoded0str);
+    unsigned char* decodedc_str = (unsigned  char*)decoded0.c_str();
+
+//    printf("in c++ encrypts = %s\n", result);
+    unsigned char*  out = decrypts(decodedc_str,strlen((char*)decodedc_str));
+//    printf("in c++ decrypts = %s\n", out);
+    std::string outres = (char*)out;
+    std::string orig0 = base64_decode(outres);
+
+    unsigned char* c_str = (unsigned  char*)orig0.c_str();
+    jstring dist = stringTojstring(env,(const char *)c_str);
+    return dist;
 }
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_neucore_neulink_aes_AesUtil_stringFromJNI(JNIEnv *env, jclass thiz) {
-    // TODO: implement stringFromJNI()
-    std::string hello = "Hello from AesUtil C++";
-    return env->NewStringUTF(hello.c_str());
+Java_com_neucore_neulink_aes_AesUtil_encBase64(JNIEnv *env, jclass clazz, jstring data) {
+    string orig = jstringTostring(env,data);
+    std::string encoded = base64_encode(orig, orig.length());
+
+    unsigned char* c_str = (unsigned  char*)encoded.c_str();
+    jstring dist = stringTojstring(env,(const char *)c_str);
+
+    return dist;
 }extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_neucore_neulink_aes_AesUtil_encrypt(JNIEnv *env, jclass clazz, jstring raw_data) {
+Java_com_neucore_neulink_aes_AesUtil_decBase64(JNIEnv *env, jclass clazz, jstring data) {
+    string orig = jstringTostring(env,data);
+    std::string decoded = base64_decode(orig);
 
-    std::string  plainData = jstringTostring(env,raw_data);
-    unsigned char* input = (unsigned  char*)plainData.c_str();
-
-    unsigned char * result = encrypts(input,plainData.length());
-
-    std::string sres = base64_encode(result,strlen((char*)result));
-
-    jstring encStr = stringTojstring(env,sres);
-
-    if (result) {
-        free(result);
-    }
-
-    return encStr;
+    unsigned char* c_str = (unsigned  char*)decoded.c_str();
+    jstring dist = stringTojstring(env,(const char *)c_str);
+    return dist;
 }extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_neucore_neulink_aes_AesUtil_decrypt(JNIEnv *env, jclass clazz, jstring enc_data) {
-    // TODO: implement decrypt()
-    std::string  plainData = jstringTostring(env,enc_data);
+Java_com_neucore_neulink_aes_AesUtil_encrypt_00024decrypt(JNIEnv *env, jclass clazz,
+                                                          jstring data) {
+    string orig = jstringTostring(env,data);
+    std::string encoded = base64_encode(orig, orig.length());
 
-    std::string sres = base64_decode(plainData);
+    unsigned char* input = (unsigned  char*)encoded.c_str();
+//    printf("in c++ plain = %s\n", input);
+    unsigned char * result = encrypts(input,strlen((char*)input));
+    std::string resultStr = (char*)result;
 
-    unsigned char* input = (unsigned  char*)sres.c_str();
+    std::string encoded0 = base64_encode(resultStr, resultStr.length());
+    unsigned char* encoded0c_str = (unsigned  char*)encoded0.c_str();
+    jstring encoded0dist = stringTojstring(env,(const char *)encoded0c_str);
 
-    unsigned char*  out = decrypts(input,strlen((char*)input));
+    string encoded0str = jstringTostring(env,encoded0dist);
+    std::string decoded0 = base64_decode(encoded0str);
+    unsigned char* decodedc_str = (unsigned  char*)decoded0.c_str();
 
+//    printf("in c++ encrypts = %s\n", result);
+    unsigned char*  out = decrypts(decodedc_str,strlen((char*)decodedc_str));
+//    printf("in c++ decrypts = %s\n", out);
     std::string outres = (char*)out;
+    std::string orig0 = base64_decode(outres);
 
-    jstring plainStr = stringTojstring(env,outres);
+    unsigned char* c_str = (unsigned  char*)orig0.c_str();
+    jstring dist = stringTojstring(env,(const char *)c_str);
+    return dist;
+}extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_neucore_neulink_aes_AesUtil_trans(JNIEnv *env, jclass clazz, jstring data) {
 
-    if (out) {
-        free(out);
-    }
-    return plainStr;
+    string in = jstringTostring(env,data);
+    unsigned char* c_str = (unsigned  char*)in.c_str();
+    jstring dist = stringTojstring(env,(const char *)c_str);
+    return dist;
 }
